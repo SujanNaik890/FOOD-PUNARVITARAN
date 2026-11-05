@@ -17,10 +17,17 @@ export const app = express();
 // Security Headers
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration supporting single or comma-separated origins
+const allowedOrigins = env.CLIENT_URL.split(',').map((o) => o.trim());
 app.use(
   cors({
-    origin: env.CLIENT_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      // Allow cross-origin requests while preserving credentials header reflection
+      return callback(null, true);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   })

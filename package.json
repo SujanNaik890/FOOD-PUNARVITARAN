@@ -9,6 +9,8 @@
     "client"
   ],
   "scripts": {
+    "start": "npm --workspace=server start",
+    "start:server": "npm --workspace=server start",
     "server": "npm --workspace=server run dev",
     "client": "npm --workspace=client run dev",
     "test:server": "npm --workspace=server test",
