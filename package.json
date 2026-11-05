@@ -1,0 +1,27 @@
+{
+  "name": "foodbridge-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FoodBridge — AI-assisted food donation and distribution platform",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "server": "npm --workspace=server run dev",
+    "client": "npm --workspace=client run dev",
+    "test:server": "npm --workspace=server test",
+    "test:client": "npm --workspace=client test",
+    "test": "npm --workspace=server test",
+    "lint": "npm --workspaces run lint"
+  },
+  "keywords": [
+    "food-rescue",
+    "ngo",
+    "zero-hunger",
+    "bengaluru"
+  ],
+  "author": "FoodBridge Team",
+  "license": "UNLICENSED"
+}

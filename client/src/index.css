@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+:root {
+  --color-forest: #164B38;
+  --color-deep-forest: #103B2D;
+  --color-cream: #FAF7EF;
+  --color-sage: #DDE9DC;
+  --color-orange: #F28B45;
+  --color-charcoal: #202820;
+}
+
+body {
+  background-color: var(--color-cream);
+  color: var(--color-charcoal);
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, .font-serif-heading {
+  font-family: 'Playfair Display', Georgia, serif;
+}

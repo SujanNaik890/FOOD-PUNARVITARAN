@@ -1,0 +1,13 @@
+{
+  "name": "@foodbridge/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./schemas/index.js",
+  "exports": {
+    ".": "./schemas/index.js",
+    "./schemas": "./schemas/index.js"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  }
+}
