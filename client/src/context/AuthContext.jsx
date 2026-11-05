@@ -5,37 +5,55 @@ import axios from 'axios';
 axios.defaults.withCredentials = true;
 axios.defaults.baseURL = 'http://localhost:5000';
 
-const initialToken = localStorage.getItem('fb_token');
-if (initialToken) {
-  axios.defaults.headers.common['Authorization'] = `Bearer ${initialToken}`;
-}
+// Attach Axios request interceptor to dynamically use per-tab token
+axios.interceptors.request.use((config) => {
+  const token = sessionStorage.getItem('fb_token') || localStorage.getItem('fb_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+const getStoredUser = () => {
+  try {
+    const session = sessionStorage.getItem('fb_user');
+    if (session) return JSON.parse(session);
+    const local = localStorage.getItem('fb_user');
+    return local ? JSON.parse(local) : null;
+  } catch (e) {
+    return null;
+  }
+};
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('fb_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState(getStoredUser);
   const [loading, setLoading] = useState(false);
 
-  // Sync user profile with server session on mount
+  // Sync tab user profile with server session on mount using tab-specific Bearer token
   useEffect(() => {
     const verifySession = async () => {
+      const activeToken = sessionStorage.getItem('fb_token') || localStorage.getItem('fb_token');
+      if (!activeToken) {
+        setUser(null);
+        return;
+      }
+
       try {
         const res = await axios.get('/api/v1/auth/me');
         if (res.data?.success && res.data?.data?.user) {
           const remoteUser = res.data.data.user;
           setUser(remoteUser);
-          localStorage.setItem('fb_user', JSON.stringify(remoteUser));
+          sessionStorage.setItem('fb_user', JSON.stringify(remoteUser));
         }
       } catch (err) {
-        // If not authenticated on server, clean up stale local storage
         if (err.response?.status === 401) {
           setUser(null);
+          sessionStorage.removeItem('fb_user');
+          sessionStorage.removeItem('fb_token');
           localStorage.removeItem('fb_user');
           localStorage.removeItem('fb_token');
-          delete axios.defaults.headers.common['Authorization'];
         }
       }
     };
@@ -51,12 +69,14 @@ export const AuthProvider = ({ children }) => {
       const token = res.data.data.token;
 
       if (token) {
+        // Tab-isolated session storage ensures multiple tabs can run different roles
+        sessionStorage.setItem('fb_token', token);
         localStorage.setItem('fb_token', token);
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       }
 
-      setUser(loggedUser);
+      sessionStorage.setItem('fb_user', JSON.stringify(loggedUser));
       localStorage.setItem('fb_user', JSON.stringify(loggedUser));
+      setUser(loggedUser);
       return { success: true, user: loggedUser };
     } catch (err) {
       return {
@@ -76,12 +96,13 @@ export const AuthProvider = ({ children }) => {
       const token = res.data.data.token;
 
       if (token) {
+        sessionStorage.setItem('fb_token', token);
         localStorage.setItem('fb_token', token);
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       }
 
-      setUser(registeredUser);
+      sessionStorage.setItem('fb_user', JSON.stringify(registeredUser));
       localStorage.setItem('fb_user', JSON.stringify(registeredUser));
+      setUser(registeredUser);
       return { success: true, user: registeredUser };
     } catch (err) {
       const errors = err.response?.data?.errors;
@@ -105,10 +126,20 @@ export const AuthProvider = ({ children }) => {
       // Proceed with local logout regardless
     }
     setUser(null);
+    sessionStorage.removeItem('fb_user');
+    sessionStorage.removeItem('fb_token');
     localStorage.removeItem('fb_user');
     localStorage.removeItem('fb_token');
-    delete axios.defaults.headers.common['Authorization'];
   };
+
+  return (
+    <AuthContext.Provider value={{ user, setUser, login, register, logout, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);
 
   return (
     <AuthContext.Provider value={{ user, setUser, login, register, logout, loading }}>

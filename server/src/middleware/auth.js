@@ -4,7 +4,10 @@ import { User } from '../models/User.js';
 
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.cookies?.fb_access || req.headers.authorization?.replace('Bearer ', '');
+    const authHeader = req.headers.authorization;
+    const token = (authHeader && authHeader.startsWith('Bearer '))
+      ? authHeader.slice(7)
+      : (req.cookies?.fb_access || authHeader);
 
     if (!token) {
       return res.status(401).json({
