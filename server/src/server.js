@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { connectDB } from './config/db.js';
 import { logger } from './utils/logger.js';
 import { seedDefaultAdmin } from './utils/seedAdmin.js';
+import { seedBengaluruTrucks } from './utils/seedBengaluruFleet.js';
 
 const server = http.createServer(app);
 
@@ -13,6 +14,7 @@ const startServer = async () => {
     try {
       await connectDB();
       await seedDefaultAdmin();
+      await seedBengaluruTrucks();
     } catch (dbErr) {
       logger.warn(`Could not connect to external MongoDB: ${dbErr.message}. Starting in offline testing mode.`);
     }
