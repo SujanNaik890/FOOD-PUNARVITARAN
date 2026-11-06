@@ -1,6 +1,9 @@
 import { User } from '../models/User.js';
 import { DonorProfile } from '../models/DonorProfile.js';
 import { NGOProfile } from '../models/NGOProfile.js';
+import { PasswordReset } from '../models/PasswordReset.js';
+import crypto from 'crypto';
+import { sendEmailNotification, sendSmsOtp } from '../integrations/notificationService.js';
 import {
   hashPassword,
   verifyPassword,
@@ -107,4 +110,92 @@ export const loginUser = async (identifier, password) => {
   await user.save();
 
   return { user, accessToken, refreshToken };
+};
+
+export const forgotPassword = async (identifier) => {
+  const cleanId = identifier.trim().toLowerCase();
+  const user = await User.findOne({
+    $or: [{ email: cleanId }, { phone: identifier.trim() }]
+  });
+
+  if (!user) {
+    // Return standard response to avoid user enumeration attack
+    return {
+      success: true,
+      message: 'If an account exists with this email or phone, password reset instructions have been generated.'
+    };
+  }
+
+  // Invalidate any previous pending reset tokens for this user
+  await PasswordReset.deleteMany({ userId: user._id });
+
+  // Generate a cryptographically secure reset token
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashToken(resetToken);
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins expiry
+
+  await PasswordReset.create({
+    userId: user._id,
+    tokenHash,
+    expiresAt,
+    consumed: false
+  });
+
+  // Attempt sending notification (email or simulated SMS)
+  if (user.email) {
+    await sendEmailNotification({
+      to: user.email,
+      subject: 'FoodBridge Password Reset Request',
+      text: `Your password reset token is: ${resetToken}\nUse this token to reset your password within 15 minutes.`
+    });
+  }
+
+  return {
+    success: true,
+    message: 'If an account exists with this email or phone, password reset instructions have been generated.',
+    // Provide resetToken in response for dev / testing convenience
+    resetToken
+  };
+};
+
+export const resetPassword = async (identifier, resetToken, newPassword) => {
+  const cleanId = identifier.trim().toLowerCase();
+  const user = await User.findOne({
+    $or: [{ email: cleanId }, { phone: identifier.trim() }]
+  });
+
+  if (!user) {
+    const error = new Error('Invalid user or expired reset token.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const tokenHash = hashToken(resetToken);
+  const resetRecord = await PasswordReset.findOne({
+    userId: user._id,
+    tokenHash,
+    consumed: false,
+    expiresAt: { $gt: new Date() }
+  });
+
+  if (!resetRecord) {
+    const error = new Error('Invalid or expired reset token. Please request a new one.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Update password
+  user.passwordHash = await hashPassword(newPassword);
+  user.refreshTokenHash = null; // Invalidate current refresh sessions
+  await user.save();
+
+  // Mark token consumed & cleanup
+  resetRecord.consumed = true;
+  await resetRecord.save();
+  await PasswordReset.deleteMany({ userId: user._id });
+
+  return {
+    success: true,
+    message: 'Password has been reset successfully. You can now log in with your new password.'
+  };
 };

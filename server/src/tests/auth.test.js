@@ -71,4 +71,40 @@ describe('Authentication Flow Integration', () => {
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
   });
+
+  it('should request forgot-password token and reset password', async () => {
+    // 1. Request forgot password
+    const forgotRes = await request(app)
+      .post('/api/v1/auth/forgot-password')
+      .send({ identifier: testDonor.email });
+
+    expect(forgotRes.status).toBe(200);
+    expect(forgotRes.body.success).toBe(true);
+    const token = forgotRes.body.data.resetToken;
+    expect(token).toBeDefined();
+
+    // 2. Reset password using token
+    const newPassword = 'NewSecretPassword456!';
+    const resetRes = await request(app)
+      .post('/api/v1/auth/reset-password')
+      .send({
+        identifier: testDonor.email,
+        resetToken: token,
+        newPassword
+      });
+
+    expect(resetRes.status).toBe(200);
+    expect(resetRes.body.success).toBe(true);
+
+    // 3. Login with new password
+    const loginRes = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        identifier: testDonor.email,
+        password: newPassword
+      });
+
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.success).toBe(true);
+  });
 });

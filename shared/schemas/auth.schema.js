@@ -64,3 +64,19 @@ export const VerifyOtpSchema = z.object({
   otp: z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
   purpose: z.enum(['REGISTRATION', 'LOGIN', 'PASSWORD_RESET', 'DELIVERY_HANDOVER'])
 });
+
+export const ForgotPasswordSchema = z.object({
+  identifier: z.string().min(3, 'Email or phone number is required')
+});
+
+export const ResetPasswordSchema = z.object({
+  identifier: z.string().min(3, 'Email or phone number is required'),
+  resetToken: z.string().min(10, 'Reset token is required'),
+  newPassword: z
+    .string()
+    .min(8, 'Password must be at least 8 characters long')
+    .regex(/[A-Z]/, 'Password must include at least one uppercase letter (A-Z)')
+    .regex(/[a-z]/, 'Password must include at least one lowercase letter (a-z)')
+    .regex(/[0-9]/, 'Password must include at least one number (0-9)')
+    .regex(/[^A-Za-z0-9]/, 'Password must include at least one special character (e.g. !, @, #, $, %, &, *)')
+});

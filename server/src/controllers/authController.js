@@ -1,4 +1,4 @@
-import { registerUser, loginUser } from '../services/authService.js';
+import { registerUser, loginUser, forgotPassword, resetPassword } from '../services/authService.js';
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -101,4 +101,33 @@ export const logoutHandler = async (req, res) => {
     success: true,
     message: 'Logged out successfully'
   });
+};
+
+export const forgotPasswordHandler = async (req, res, next) => {
+  try {
+    const { identifier } = req.validatedBody;
+    const result = await forgotPassword(identifier);
+    res.status(200).json({
+      success: true,
+      message: result.message,
+      data: {
+        resetToken: result.resetToken
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resetPasswordHandler = async (req, res, next) => {
+  try {
+    const { identifier, resetToken, newPassword } = req.validatedBody;
+    const result = await resetPassword(identifier, resetToken, newPassword);
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  } catch (error) {
+    next(error);
+  }
 };
