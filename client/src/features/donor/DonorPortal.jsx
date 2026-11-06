@@ -17,7 +17,14 @@ import {
   ChevronRight,
   ShieldCheck,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Users,
+  Search,
+  Check,
+  Phone,
+  Mail,
+  Navigation
 } from 'lucide-react';
 
 const STATUS_STEPS = [
@@ -25,6 +32,7 @@ const STATUS_STEPS = [
   { key: 'VALIDATED', label: 'Safety Verified' },
   { key: 'MATCHING', label: 'NGO Matched' },
   { key: 'NGO_ACCEPTED', label: 'Shelter Accepted' },
+  { key: 'VEHICLE_ASSIGNED', label: 'Vehicle Assigned' },
   { key: 'IN_TRANSIT', label: 'In Transit' },
   { key: 'CLOSED', label: 'Handed Over' }
 ];
@@ -58,6 +66,11 @@ export function DonorPortal() {
   const [imagePreview, setImagePreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // NGO Directory & Donor Selection State
+  const [ngos, setNgos] = useState([]);
+  const [selectedNgo, setSelectedNgo] = useState(null);
+  const [ngoSearch, setNgoSearch] = useState('');
+
   const handleImageFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -81,10 +94,23 @@ export function DonorPortal() {
     }
   };
 
+  const fetchNgos = async () => {
+    try {
+      const res = await axios.get('/api/v1/admin/ngos');
+      setNgos(res.data.data.ngos || []);
+    } catch (err) {
+      console.error('Failed to fetch NGOs list:', err);
+    }
+  };
+
   useEffect(() => {
     fetchDonations();
+    fetchNgos();
     // Auto-poll every 5 seconds so donor sees NGO match and acceptance in real time
-    const interval = setInterval(fetchDonations, 5000);
+    const interval = setInterval(() => {
+      fetchDonations();
+      fetchNgos();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -93,6 +119,10 @@ export function DonorPortal() {
     setSubmitting(true);
 
     const deadline = new Date(Date.now() + parseInt(hoursRemaining) * 3600 * 1000).toISOString();
+
+    // Sanitize phone number (remove leading 0 or +91 if present)
+    const rawPhone = (contactPhone || user?.phone || '').toString().trim();
+    const sanitizedPhone = rawPhone.replace(/[\s\-\(\)]/g, '').replace(/^(\+91|91|0)/, '');
 
     const payload = {
       foodCategory,
@@ -113,12 +143,13 @@ export function DonorPortal() {
         city: 'Bengaluru',
         pincode: pincode,
         contactPerson: user?.name || 'Donor Incharge',
-        contactPhone: contactPhone || user?.phone
+        contactPhone: sanitizedPhone
       },
       pickupCoordinates: {
         latitude: 12.9784,
         longitude: 77.6412
       },
+      preferredNgoId: selectedNgo?.id || null,
       notes
     };
 
@@ -146,6 +177,11 @@ export function DonorPortal() {
         alert('Permission Denied: Your active session lacks Food Donor permissions (you may be logged in as an NGO Manager or Admin in another tab). Please sign in with a Donor account.');
       } else if (err.response?.status === 401) {
         alert('Session expired or invalid. Please sign in again.');
+      } else if (err.response?.data?.errors?.length) {
+        const errorDetails = err.response.data.errors
+          .map((e) => `• ${e.field}: ${e.message}`)
+          .join('\n');
+        alert(`Validation Error:\n${errorDetails}`);
       } else {
         alert(err.response?.data?.message || 'Error creating donation');
       }
@@ -291,20 +327,27 @@ export function DonorPortal() {
           </div>
 
           <div className="py-4">
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-7 gap-2">
               {STATUS_STEPS.map((st, i) => {
                 const currentStatus = donations[0].status;
                 const statusOrder = [
                   'SUBMITTED',
                   'VALIDATED',
                   'MATCHING',
+                  'ALLOCATED_PENDING_APPROVAL',
+                  'NGO_NOTIFIED',
                   'NGO_ACCEPTED',
+                  'VEHICLE_ASSIGNED',
+                  'PICKUP_IN_PROGRESS',
+                  'FOOD_COLLECTED',
                   'IN_TRANSIT',
+                  'ARRIVED_AT_DESTINATION',
+                  'DELIVERED_CONFIRMED',
                   'CLOSED'
                 ];
                 const currentIndex = statusOrder.indexOf(currentStatus);
-                const stepIndex = statusOrder.indexOf(st.key);
-                const isPassed = stepIndex <= (currentIndex !== -1 ? currentIndex : 1);
+                const stepTargetIndex = statusOrder.indexOf(st.key);
+                const isPassed = stepTargetIndex <= (currentIndex !== -1 ? currentIndex : 1);
 
                 return (
                   <div key={st.key} className="flex flex-col items-center text-center space-y-2">
@@ -406,6 +449,172 @@ export function DonorPortal() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Verified NGOs & Shelter Directory Section (Donor Discovery & Direct Pick) */}
+      <div className="bg-white rounded-3xl border border-[#DDE9DC] p-6 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-[#DDE9DC] pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E6F8F0] text-[#164B38] uppercase tracking-wider">
+                Partner Directory
+              </span>
+              <span className="text-xs text-gray-500">({ngos.length} Registered Shelters)</span>
+            </div>
+            <h2 className="text-xl font-bold font-serif-heading text-[#103B2D] mt-1 flex items-center gap-2">
+              <Building2 size={22} className="text-[#164B38]" /> Verified Bengaluru NGOs & Shelters
+            </h2>
+            <p className="text-xs text-gray-500">
+              Browse partner shelters and pick the exact NGO you wish to support.
+            </p>
+          </div>
+
+          <div className="w-full sm:w-72 relative">
+            <Search className="absolute left-3 top-2.5 text-gray-400" size={15} />
+            <input
+              type="text"
+              value={ngoSearch}
+              onChange={(e) => setNgoSearch(e.target.value)}
+              placeholder="Search by NGO name or area..."
+              className="w-full pl-9 pr-3 py-2 text-xs bg-[#FAF7EF] border border-[#DDE9DC] rounded-xl focus:outline-none focus:border-[#164B38]"
+            />
+          </div>
+        </div>
+
+        {/* Selected NGO Indicator if chosen */}
+        {selectedNgo && (
+          <div className="p-4 bg-[#E6F8F0] border border-[#01B574]/30 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#01B574] text-white flex items-center justify-center font-bold">
+                <Check size={20} />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-[#164B38] uppercase tracking-wider">
+                  Active Selected NGO for Your Next Donation
+                </div>
+                <div className="text-sm font-extrabold text-[#103B2D]">
+                  {selectedNgo.ngoName} &bull; <span className="text-xs font-normal text-gray-600">{selectedNgo.address?.area}</span>
+                </div>
+                <div className="text-[11px] text-gray-600 flex items-center gap-3 mt-0.5">
+                  <span className="flex items-center gap-1"><MapPin size={11} /> {selectedNgo.address?.line1}, {selectedNgo.address?.pincode}</span>
+                  <span className="flex items-center gap-1 font-mono"><Phone size={11} /> {selectedNgo.contactPhone}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex-1 sm:flex-none px-4 py-2 bg-[#164B38] hover:bg-[#103B2D] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+              >
+                <PlusCircle size={14} /> Donate to This NGO
+              </button>
+              <button
+                onClick={() => setSelectedNgo(null)}
+                className="px-3 py-2 text-xs font-semibold text-gray-500 hover:text-gray-800 bg-white rounded-xl border border-gray-200"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* NGO Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+          {ngos
+            .filter(
+              (ngo) =>
+                ngo.ngoName?.toLowerCase().includes(ngoSearch.toLowerCase()) ||
+                ngo.address?.area?.toLowerCase().includes(ngoSearch.toLowerCase()) ||
+                ngo.address?.line1?.toLowerCase().includes(ngoSearch.toLowerCase())
+            )
+            .map((ngo) => {
+              const isSelected = selectedNgo?.id === ngo.id;
+              return (
+                <div
+                  key={ngo.id}
+                  className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${
+                    isSelected
+                      ? 'border-[#01B574] bg-[#F4FBF7] shadow-md ring-2 ring-[#01B574]/20'
+                      : 'border-[#DDE9DC] bg-white hover:border-[#164B38]/40 hover:shadow-sm'
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="w-9 h-9 rounded-xl bg-[#DDE9DC] text-[#164B38] flex items-center justify-center font-bold text-xs shrink-0">
+                        <Building2 size={18} />
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                        <ShieldCheck size={10} /> Verified
+                      </span>
+                    </div>
+
+                    <div>
+                      <h3 className="font-bold text-sm text-[#103B2D] leading-tight">
+                        {ngo.ngoName}
+                      </h3>
+                      <p className="text-[10px] font-mono text-gray-400 mt-0.5">
+                        Reg: {ngo.registrationNumber}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1 text-xs text-gray-600 bg-[#FAF7EF] p-2.5 rounded-xl border border-[#DDE9DC]/60">
+                      <div className="flex items-start gap-1.5">
+                        <MapPin size={13} className="text-[#164B38] shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-semibold text-gray-800">{ngo.address?.area}, Bengaluru</div>
+                          <div className="text-[11px] text-gray-500 leading-snug">
+                            {ngo.address?.line1} &bull; PIN {ngo.address?.pincode}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-[#DDE9DC]/60 text-[11px]">
+                        <span className="flex items-center gap-1 text-gray-600">
+                          <Users size={12} className="text-[#F28B45]" /> Headcount: <strong>{ngo.currentHeadcount} beneficiaries</strong>
+                        </span>
+                        <span className="text-emerald-700 font-bold">
+                          {Math.round((ngo.acceptanceReliabilityScore || 0.98) * 100)}% reliability
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 mt-3 border-t border-gray-100 flex items-center justify-between gap-2">
+                    <a
+                      href={`tel:${ngo.contactPhone || '9845012340'}`}
+                      className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                      title="Call NGO Manager"
+                    >
+                      <Phone size={12} /> Call
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedNgo(ngo);
+                        setShowCreateModal(true);
+                      }}
+                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-[#01B574] text-white shadow-xs'
+                          : 'bg-[#164B38] hover:bg-[#103B2D] text-white shadow-xs'
+                      }`}
+                    >
+                      {isSelected ? (
+                        <>
+                          <Check size={12} /> Selected for Donation
+                        </>
+                      ) : (
+                        <>
+                          <PlusCircle size={12} /> Pick This NGO
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
       </div>
 
       {/* Multi-Step Food Donation Modal */}
@@ -637,6 +846,48 @@ export function DonorPortal() {
 
               {currentStep === 3 && (
                 <div className="space-y-4">
+                  {/* NGO Choice Selector inside Modal */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Building2 size={13} className="text-[#164B38]" /> Pick Dedicated NGO / Shelter
+                      </span>
+                      <span className="text-[10px] text-gray-500 font-normal">
+                        Optional &bull; or AI auto-routes
+                      </span>
+                    </label>
+                    <select
+                      value={selectedNgo?.id || ''}
+                      onChange={(e) => {
+                        const chosen = ngos.find((n) => n.id === e.target.value);
+                        setSelectedNgo(chosen || null);
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-white border border-[#DDE9DC] rounded-xl focus:outline-none focus:border-[#164B38]"
+                    >
+                      <option value="">-- Let AI Dispatch to Nearest Shelter --</option>
+                      {ngos.map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.ngoName} ({n.address?.area} &bull; {n.currentHeadcount} beneficiaries)
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedNgo && (
+                      <div className="mt-1.5 p-2 bg-[#E6F8F0] border border-[#01B574]/20 rounded-lg text-[11px] text-[#164B38] flex items-center justify-between">
+                        <div>
+                          <span className="font-bold">Destination:</span> {selectedNgo.ngoName} ({selectedNgo.address?.line1}, {selectedNgo.address?.area})
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNgo(null)}
+                          className="text-gray-400 hover:text-gray-700 text-xs ml-2 font-bold"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Street / Facility Address Line 1 *

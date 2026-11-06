@@ -90,6 +90,10 @@ const DonationSchema = new mongoose.Schema(
     },
     rejectionReason: { type: String },
     cancellationReason: { type: String },
+    preferredNgoId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'NGOProfile'
+    },
     notes: { type: String }
   },
   {

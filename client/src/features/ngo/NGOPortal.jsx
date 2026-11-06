@@ -30,13 +30,17 @@ export function NGOPortal() {
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [activeRequests, setActiveRequests] = useState([]);
 
-  // Fetch real-time live allocation requests dispatched by Admin
+  // Fetch real-time live allocation requests dispatched by Admin & Persistent Capacity Settings
   const fetchNGORequests = async () => {
     try {
       const res = await axios.get('/api/v1/ngo/requests');
       setActiveRequests(res.data.data.requests || []);
       if (res.data.data.ngoProfile) {
-        setHeadcount(res.data.data.ngoProfile.currentHeadcount || 180);
+        const prof = res.data.data.ngoProfile;
+        if (prof.currentHeadcount !== undefined) setHeadcount(prof.currentHeadcount);
+        if (prof.storageFacilities?.maxCapacityKg !== undefined) setMaxStorageKg(prof.storageFacilities.maxCapacityKg);
+        if (prof.storageFacilities?.hasRefrigeration !== undefined) setHasRefrigeration(prof.storageFacilities.hasRefrigeration);
+        if (prof.foodPreferences?.length) setDietaryPref(prof.foodPreferences);
       }
     } catch (err) {
       console.error('Failed to load NGO requests:', err);
@@ -68,15 +72,17 @@ export function NGOPortal() {
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const [submittingDelivery, setSubmittingDelivery] = useState(false);
 
-  // Nearest Donors & Direct Contact / Chat / Uber Booking State
+  // Nearest Donors & Direct Contact / Chat / Charity Fleet Booking State
   const [nearbyDonors, setNearbyDonors] = useState([]);
   const [loadingDonors, setLoadingDonors] = useState(false);
   const [activeChatDonor, setActiveChatDonor] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
-  const [activeUberDonation, setActiveUberDonation] = useState(null);
-  const [bookingUber, setBookingUber] = useState(false);
-  const [uberConfirmed, setUberConfirmed] = useState(null);
+  const [activeTruckDonor, setActiveTruckDonor] = useState(null);
+  const [availableTrucks, setAvailableTrucks] = useState([]);
+  const [loadingTrucks, setLoadingTrucks] = useState(false);
+  const [bookingTruck, setBookingTruck] = useState(false);
+  const [truckConfirmed, setTruckConfirmed] = useState(null);
   const [navigationDonor, setNavigationDonor] = useState(null);
 
   const fetchNearbyDonors = async () => {
@@ -120,21 +126,36 @@ export function NGOPortal() {
     }
   };
 
-  const handleBookUber = async (donation) => {
-    setBookingUber(true);
+  const openTruckSelector = async (donor) => {
+    setActiveTruckDonor(donor);
+    setLoadingTrucks(true);
     try {
-      const res = await axios.post('/api/v1/comm/book-uber', {
-        donationId: donation.donationId,
-        pickupArea: donation.area,
-        dropArea: 'NGO Shelter Facility',
-        vehicleType: 'AUTO_CARGO'
+      const lat = donor.coordinates?.[1] || 12.9784;
+      const lng = donor.coordinates?.[0] || 77.6412;
+      const res = await axios.get(`/api/v1/comm/nearby-charity-trucks?lat=${lat}&lng=${lng}`);
+      setAvailableTrucks(res.data.data.trucks || []);
+    } catch (err) {
+      console.error('Failed to load charity trucks:', err);
+      setAvailableTrucks([]);
+    } finally {
+      setLoadingTrucks(false);
+    }
+  };
+
+  const handleDispatchTruck = async (donor, vehicleId) => {
+    setBookingTruck(true);
+    try {
+      const res = await axios.post('/api/v1/comm/dispatch-charity-truck', {
+        donationId: donor.donationId,
+        vehicleId
       });
-      setUberConfirmed(res.data.data);
+      setTruckConfirmed(res.data.data);
+      setActiveTruckDonor(null);
       fetchNearbyDonors();
     } catch (err) {
-      alert(err.response?.data?.message || 'Uber booking simulation failed.');
+      alert(err.response?.data?.message || 'Charity truck dispatch failed.');
     } finally {
-      setBookingUber(false);
+      setBookingTruck(false);
     }
   };
 
@@ -150,13 +171,22 @@ export function NGOPortal() {
     }
   };
 
-  const handleCapacitySave = (e) => {
+  const handleCapacitySave = async (e) => {
     e.preventDefault();
     setSavingCapacity(true);
-    setTimeout(() => {
+    try {
+      await axios.put('/api/v1/ngo/capacity', {
+        headcount: Number(headcount),
+        maxStorageKg: Number(maxStorageKg),
+        hasRefrigeration: Boolean(hasRefrigeration),
+        dietaryPref
+      });
+      alert('NGO Beneficiary Headcount & Capacity Settings successfully saved to MongoDB database! These settings will persist whenever you log in or host on Render.');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update capacity settings.');
+    } finally {
       setSavingCapacity(false);
-      alert('NGO dietary capacity and daily headcount updated for Bengaluru matching engine.');
-    }, 600);
+    }
   };
 
   const handleRespond = async (id, action, reason = '') => {
@@ -181,14 +211,28 @@ export function NGOPortal() {
     }
   };
 
-  const handleConfirmReceipt = (e) => {
+  const handleConfirmReceipt = async (e) => {
     e.preventDefault();
     setSubmittingDelivery(true);
-    setTimeout(() => {
-      alert(`Receipt verified! ${receivedQty} portions marked delivered. Leaderboard credits issued.`);
+    try {
+      const res = await axios.post('/api/v1/ngo/confirm-handover', {
+        otp: deliveryOtp.trim(),
+        receivedQuantity: Number(receivedQty),
+        proofImageUrl: proofUrl
+      });
+      alert(res.data.message || `Receipt verified! ${receivedQty} portions marked delivered.`);
       setShowDeliveryModal(false);
+      setDeliveryOtp('');
+      setReceivedQty('');
+      setProofPreview(null);
+      setProofUrl('');
+      fetchNGORequests();
+      fetchNearbyDonors();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Handover verification failed. Please check the Delivery OTP.');
+    } finally {
       setSubmittingDelivery(false);
-    }, 800);
+    }
   };
 
   return (
@@ -419,13 +463,12 @@ export function NGOPortal() {
                     <Navigation size={12} className="text-[#164B38]" /> Map
                   </button>
 
-                  {/* 4. Book Uber Food Delivery */}
+                  {/* 4. Book Nearest Charity Truck */}
                   <button
-                    onClick={() => handleBookUber(donor)}
-                    disabled={bookingUber}
+                    onClick={() => openTruckSelector(donor)}
                     className="py-2 px-2 bg-[#164B38] hover:bg-[#103B2D] text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1 shadow-xs transition-all text-center"
                   >
-                    <Truck size={12} className="text-[#F28B45]" /> Uber
+                    <Truck size={12} className="text-[#F28B45]" /> Trucks
                   </button>
                 </div>
               </div>
@@ -525,12 +568,13 @@ export function NGOPortal() {
               </a>
               <button
                 onClick={() => {
+                  const donorToDispatch = navigationDonor;
                   setNavigationDonor(null);
-                  handleBookUber(navigationDonor);
+                  openTruckSelector(donorToDispatch);
                 }}
                 className="flex-2 py-2.5 bg-[#164B38] hover:bg-[#103B2D] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md text-center"
               >
-                <Truck size={14} className="text-[#F28B45]" /> Dispatch Uber Vehicle to This Location
+                <Truck size={14} className="text-[#F28B45]" /> Dispatch Nearest Charity Truck
               </button>
             </div>
           </div>
@@ -612,8 +656,92 @@ export function NGOPortal() {
         </div>
       )}
 
-      {/* Uber Booking Confirmation Modal */}
-      {uberConfirmed && (
+      {/* Nearest Charity Trucks Discovery & Selection Modal */}
+      {activeTruckDonor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#FAF7EF] w-full max-w-lg rounded-3xl p-6 shadow-2xl border border-[#DDE9DC] relative animate-in fade-in zoom-in-95 space-y-4">
+            <button
+              onClick={() => setActiveTruckDonor(null)}
+              className="absolute top-5 right-5 text-gray-500 hover:text-gray-800 text-xl font-bold w-8 h-8 rounded-full flex items-center justify-center"
+            >
+              &times;
+            </button>
+
+            <div>
+              <span className="text-xs font-bold text-[#164B38] uppercase tracking-wider flex items-center gap-1.5">
+                <Truck size={14} className="text-[#F28B45]" /> Dedicated Food Rescue Fleet
+              </span>
+              <h3 className="text-xl font-bold font-serif-heading text-[#103B2D] mt-0.5">
+                Nearest Charity Trucks & Vans
+              </h3>
+              <p className="text-xs text-gray-600">
+                Dispatch an active charity cargo vehicle to collect <strong>{activeTruckDonor.portions} portions</strong> from {activeTruckDonor.donorName} ({activeTruckDonor.area}).
+              </p>
+            </div>
+
+            {loadingTrucks ? (
+              <div className="py-12 text-center text-xs text-gray-500">
+                Scanning Bengaluru charity fleet GPS positions...
+              </div>
+            ) : availableTrucks.length === 0 ? (
+              <div className="py-8 text-center text-xs text-gray-500 bg-white rounded-2xl border border-gray-200">
+                No active charity trucks located within range right now.
+              </div>
+            ) : (
+              <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
+                {availableTrucks.map((truck) => (
+                  <div
+                    key={truck.id}
+                    className="p-3.5 bg-white rounded-2xl border border-[#DDE9DC] hover:border-[#164B38] transition-all flex items-center justify-between gap-3 shadow-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-[#103B2D]">{truck.driverName}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 font-mono">
+                          {truck.registrationNumber}
+                        </span>
+                        {truck.hasCooling && (
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-100 text-blue-800">
+                            Refrigerated
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-500 flex items-center gap-3">
+                        <span>Type: <strong>{truck.vehicleType.replace('_', ' ')}</strong></span>
+                        <span>Capacity: <strong>{truck.capacityKg} kg</strong></span>
+                        <span>Driver Ph: <strong>{truck.driverPhone}</strong></span>
+                      </div>
+                      <div className="text-[11px] text-[#164B38] font-semibold flex items-center gap-2">
+                        <span>Distance: <strong>{truck.distanceKm} km</strong></span>
+                        <span>&bull;</span>
+                        <span>ETA: <strong>{truck.eta}</strong></span>
+                        <span>&bull;</span>
+                        <span className="text-emerald-700 font-bold">{truck.cost}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleDispatchTruck(activeTruckDonor, truck.id)}
+                      disabled={bookingTruck}
+                      className="px-4 py-2 bg-[#164B38] hover:bg-[#103B2D] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                    >
+                      <Truck size={13} className="text-[#F28B45]" /> Dispatch
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="p-3 bg-[#E6F8F0] border border-[#01B574]/30 rounded-xl text-[11px] text-[#164B38] flex items-center justify-between">
+              <span>All charity fleet transports are <strong>100% Free</strong> for verified NGOs.</span>
+              <span className="font-bold text-emerald-800">Zero Commission</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Charity Truck Dispatch Confirmation Modal */}
+      {truckConfirmed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-[#FAF7EF] w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-[#DDE9DC] relative animate-in fade-in zoom-in-95 text-center space-y-4">
             <div className="w-14 h-14 bg-emerald-100 text-emerald-800 rounded-full flex items-center justify-center mx-auto shadow-sm">
@@ -622,44 +750,54 @@ export function NGOPortal() {
 
             <div>
               <h3 className="text-xl font-bold font-serif-heading text-[#103B2D]">
-                Uber Express Dispatched!
+                Charity Truck Dispatched!
               </h3>
               <p className="text-xs text-gray-600 mt-1">
-                Your on-demand pickup vehicle is en route to the donor’s facility.
+                Your dedicated food rescue vehicle is en route to collect donor meals.
               </p>
             </div>
 
             <div className="p-4 bg-white rounded-2xl border border-gray-200 text-left text-xs space-y-2">
               <div className="flex justify-between">
                 <span className="text-gray-500">Booking Ref:</span>
-                <span className="font-mono font-bold text-[#164B38]">{uberConfirmed.bookingReference}</span>
+                <span className="font-mono font-bold text-[#164B38]">{truckConfirmed.bookingReference}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Assigned Driver:</span>
-                <span className="font-semibold text-gray-900">{uberConfirmed.driverName}</span>
+                <span className="font-semibold text-gray-900">{truckConfirmed.driverName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Vehicle / Plate:</span>
-                <span className="font-mono font-semibold">{uberConfirmed.plate}</span>
+                <span className="font-mono font-semibold">{truckConfirmed.plate}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Vehicle Type:</span>
+                <span className="font-semibold">{truckConfirmed.vehicleType?.replace('_', ' ')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Driver Phone:</span>
-                <span className="font-semibold">{uberConfirmed.driverPhone}</span>
+                <span className="font-semibold">{truckConfirmed.driverPhone}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Pickup OTP:</span>
                 <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
-                  {uberConfirmed.pickupOtp}
+                  {truckConfirmed.pickupOtp}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Est. Arrival:</span>
-                <span className="font-bold text-emerald-700">{uberConfirmed.pickupEta}</span>
+                <span className="font-bold text-emerald-700">{truckConfirmed.pickupEta}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                <span className="text-gray-500">Transit Cost:</span>
+                <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
+                  {truckConfirmed.estimatedFare || '100% FREE (Charity Fleet)'}
+                </span>
               </div>
             </div>
 
             <button
-              onClick={() => setUberConfirmed(null)}
+              onClick={() => setTruckConfirmed(null)}
               className="w-full py-2.5 bg-[#164B38] hover:bg-[#103B2D] text-white rounded-xl text-xs font-bold transition-all shadow-md"
             >
               Done & Return to Portal

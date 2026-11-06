@@ -49,9 +49,15 @@ export const CreateDonationSchema = z.object({
   storageCondition: StorageConditionSchema.default('AMBIENT'),
   pickupAddress: AddressSchema.extend({
     contactPerson: z.string().min(2, 'Contact person name is required'),
-    contactPhone: z.string().regex(/^[6-9]\d{9}$/, 'Valid 10-digit Indian mobile number required')
+    contactPhone: z
+      .string()
+      .transform((val) => val.replace(/[\s\-\(\)]/g, '').replace(/^(\+91|91|0)/, ''))
+      .refine((val) => /^[6-9]\d{9}$/.test(val), {
+        message: 'Valid 10-digit Indian mobile number required (starting with 6-9)'
+      })
   }),
   pickupCoordinates: CoordinatesSchema,
+  preferredNgoId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid MongoDB ObjectId').optional().nullable(),
   notes: z.string().max(500).optional()
 });
 

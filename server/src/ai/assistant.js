@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import { env } from '../config/env.js';
 import { findAndRankMatches } from '../services/donationService.js';
 import { Donation } from '../models/Donation.js';
@@ -313,27 +314,16 @@ I am equipped with complete map and location knowledge of verified NGOs across B
 };
 
 /**
- * AI Assistant Chat Interface with Structured Formatting & Bengaluru Map Knowledge
+ * AI Assistant Chat Interface with Dual Engine Support:
+ * 1. Groq (Llama-3.3-70b-versatile or Llama-3.1-8b-instant) - Ultra-fast responses
+ * 2. Gemini (gemini-1.5-flash / gemini-2.0)
+ * 3. Offline High-Fidelity Bengaluru Operations Knowledge Base fallback
  */
 export const queryOperationsAssistant = async (prompt, conversationHistory = []) => {
-  // If no Gemini key is provided, return rich structured markdown response
-  if (!env.GEMINI_API_KEY) {
-    const offlineMessage = await generateOfflineStructuredResponse(prompt);
-    return {
-      message: offlineMessage,
-      toolExecuted: null
-    };
-  }
-
-  try {
-    const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      tools: [{ functionDeclarations: AI_TOOLS_DECLARATIONS }],
-      systemInstruction: `You are the FoodBridge Bengaluru Operations Copilot & Map Logistics Expert.
+  const systemPrompt = `You are the FOOD PUNARVITARAN Bengaluru Operations Copilot & Map Logistics Expert.
 Your mission is to assist human administrators and coordinators in surplus food rescue, NGO identification, and routing across Bengaluru, Karnataka.
 
-CRITICAL INSTRUCTIONS & FORMATTING RULES (Like EduPilot AI):
+CRITICAL INSTRUCTIONS & FORMATTING RULES:
 1. PRODUCE CLEAN, HIGH-CONTENT MARKDOWN RESPONSES:
    - Start with a clear level 2 heading (e.g. ## 🗺️ Bengaluru NGO Location Analysis).
    - Provide a "### 🎯 Direct Answer" immediately.
@@ -345,46 +335,93 @@ CRITICAL INSTRUCTIONS & FORMATTING RULES (Like EduPilot AI):
 2. GEOSPATIAL MAP KNOWLEDGE OF BENGALURU:
    - You have native knowledge of Bengaluru geography, zones (North, South, East, West, Central, ITPL Whitefield, Electronic City, Koramangala, Indiranagar, HSR, Jayanagar, Rajajinagar, Yelahanka).
    - Always provide exact coordinates or landmarks when discussing locations.
-   - Use tools: 'searchBengaluruNGOsByLocation', 'calculateTransitRoute', 'rankNGOs', 'getDonationDetails', 'getAvailableVehicles', 'generateOperationsReport'.
 3. SAFETY & GOVERNANCE:
-   - All database state transitions (vehicle dispatch, allocation confirmation) REQUIRE human-in-the-loop approval.
-   - Strictly respect dietary constraints (veg vs non-veg) and remaining food shelf life.`
-    });
+   - All database state transitions (charity truck dispatch, allocation confirmation) REQUIRE human-in-the-loop approval.
+   - Strictly respect dietary constraints (veg vs non-veg) and remaining food shelf life.`;
 
-    const chat = model.startChat({ history: conversationHistory });
-    const result = await chat.sendMessage(prompt);
-    const call = result.response.functionCalls()?.[0];
+  // 1. Try GROQ if GROQ_API_KEY is configured
+  if (env.GROQ_API_KEY) {
+    try {
+      const groq = new Groq({ apiKey: env.GROQ_API_KEY });
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory.map((m) => ({
+          role: m.role === 'model' ? 'assistant' : m.role || 'user',
+          content: typeof m.parts === 'string' ? m.parts : (m.parts?.[0]?.text || m.content || '')
+        })),
+        { role: 'user', content: prompt }
+      ];
 
-    if (call) {
-      const toolResult = await executeAITool(call.name, call.args);
-      const secondResponse = await chat.sendMessage([
-        {
-          functionResponse: {
-            name: call.name,
-            response: toolResult
-          }
-        }
-      ]);
-      return {
-        message: secondResponse.response.text(),
-        toolExecuted: {
-          name: call.name,
-          arguments: call.args,
-          output: toolResult
-        }
-      };
+      const completion = await groq.chat.completions.create({
+        model: 'qwen/qwen3.8-27b',
+        messages,
+        temperature: 0.3,
+        max_tokens: 1024
+      });
+
+      const reply = completion.choices[0]?.message?.content;
+      if (reply) {
+        return {
+          message: reply,
+          engine: 'Groq (qwen3.8-27b)',
+          toolExecuted: null
+        };
+      }
+    } catch (groqErr) {
+      console.warn('Groq query failed or rate-limited, checking Gemini:', groqErr.message);
     }
-
-    return {
-      message: result.response.text(),
-      toolExecuted: null
-    };
-  } catch (error) {
-    // If Gemini call fails (e.g. invalid key or network issue), fallback gracefully to offline structured handler
-    const fallbackMessage = await generateOfflineStructuredResponse(prompt);
-    return {
-      message: fallbackMessage,
-      toolExecuted: null
-    };
   }
+
+  // 2. Try GEMINI if GEMINI_API_KEY is configured
+  if (env.GEMINI_API_KEY) {
+    try {
+      const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-1.5-flash',
+        tools: [{ functionDeclarations: AI_TOOLS_DECLARATIONS }],
+        systemInstruction: systemPrompt
+      });
+
+      const chat = model.startChat({ history: conversationHistory });
+      const result = await chat.sendMessage(prompt);
+      const call = result.response.functionCalls()?.[0];
+
+      if (call) {
+        const toolResult = await executeAITool(call.name, call.args);
+        const secondResponse = await chat.sendMessage([
+          {
+            functionResponse: {
+              name: call.name,
+              response: toolResult
+            }
+          }
+        ]);
+        return {
+          message: secondResponse.response.text(),
+          engine: 'Google Gemini 1.5 Flash',
+          toolExecuted: {
+            name: call.name,
+            arguments: call.args,
+            output: toolResult
+          }
+        };
+      }
+
+      return {
+        message: result.response.text(),
+        engine: 'Google Gemini 1.5 Flash',
+        toolExecuted: null
+      };
+    } catch (geminiErr) {
+      console.warn('Gemini query failed, falling back to offline knowledge engine:', geminiErr.message);
+    }
+  }
+
+  // 3. High-Fidelity Local Operations Knowledge Engine Fallback
+  const offlineMessage = await generateOfflineStructuredResponse(prompt);
+  return {
+    message: offlineMessage,
+    engine: 'Food Punarvitaran Operations Engine',
+    toolExecuted: null
+  };
 };
